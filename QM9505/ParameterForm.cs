@@ -38,11 +38,77 @@ namespace QM9505
         private List<DateTime> tempTimeHistory = new List<DateTime>(); // 采集时间
         private int tempSampleCounter = 0;
 
+        private bool isCompensating = false;
+
 
         public ParameterForm()
         {
             InitializeComponent();
             threadLock = new object();
+        }
+
+        private void autoCompensateTimer_Tick(object sender, EventArgs e)
+        {
+
+            // 若当前处于手动操作或补偿中，暂停自动逻辑
+            if (Variable.Tempertest != 1 || isCompensating)
+                return;
+
+            try
+            {
+                // 获取当前温度
+                double currentTemp = Variable.TemperData[0];
+                double targetTemp = Convert.ToDouble(temper.Text); 
+                int autoOffset = CalculateOffsetValue(currentTemp, targetTemp);
+                offsets.Text = autoOffset.ToString(); // 自动填充计算结果
+                // 获取设定的温度上限
+                double tempUpperLimit = Variable.TempUpLimit;
+
+                // 校验温度值有效性
+                if (double.IsNaN(currentTemp) || double.IsNaN(tempUpperLimit))
+                    return;
+
+                // 读取预设的补偿值
+                int offsetValue;
+                if (!int.TryParse(offsets.Text, out offsetValue))
+                {
+
+                    return;
+                }
+
+                // 温度超限判断（当前温度 > 上限值）
+                if (currentTemp > tempUpperLimit)
+                {
+                    isCompensating = true; // 标记为补偿中
+                    Variable.Tempertest = 0; // 暂停温度读取，避免冲突
+
+                    // 调用补偿值写入方法
+                    string channelAddress = (8).ToString("X2"); // 通道地址
+                    ConTempWrite("01", channelAddress, (short)offsetValue);
+
+                    // 补偿后延迟一段时间
+                    Thread.Sleep(500);
+
+                    Variable.Tempertest = 1; // 恢复温度读取
+                    isCompensating = false; // 解除补偿标记
+
+                }
+            }
+            catch (Exception ex)
+            {
+                // 异常处理
+                isCompensating = false;
+                Variable.Tempertest = 1;
+            }
+        }
+
+        // 自动计算补偿值（当前温度 - 目标温度 = 偏差，补偿值 = 偏差 * 系数）
+        private int CalculateOffsetValue(double currentTemp, double targetTemp)
+        {
+            double deviation = currentTemp - targetTemp; // 温度偏差
+
+            double compensationFactor = deviation; // 补偿系数
+            return (int)(deviation * compensationFactor); // 计算补偿值
         }
 
         protected override void OnVisibleChanged(EventArgs e)
@@ -127,7 +193,7 @@ namespace QM9505
             {
                 testTimeReadCheck.Checked = false;
             }
-
+            autoCompensateTimer.Enabled = true; // 启动自动检测
         }
 
         #endregion
